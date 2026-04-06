@@ -91,13 +91,13 @@ function buildDefaults() {
       const meta = CLOTHING_TYPES[type];
       // Fewer items in size 50 (they grow out fast)
       const target = sz === "50" ? Math.max(1, Math.ceil(meta.defaultTarget * 0.5)) : meta.defaultTarget;
-      items.push({ id: "c" + (++id), type, sizeGroup: sz, owned: 0, target, notes: "", photo: "" });
+      items.push({ id: "c" + (++id), type, sizeGroup: sz, owned: 0, target, notes: "", photos: [] });
     });
   });
 
   TRANS_AGE_TYPES.forEach(type => {
     const meta = CLOTHING_TYPES[type];
-    items.push({ id: "c" + (++id), type, sizeGroup: "one-size", owned: 0, target: meta.defaultTarget, notes: "", photo: "" });
+    items.push({ id: "c" + (++id), type, sizeGroup: "one-size", owned: 0, target: meta.defaultTarget, notes: "", photos: [] });
   });
 
   return items;
@@ -150,36 +150,42 @@ function compressImage(file, maxDim, quality) {
   });
 }
 
-/* ── Photo component ── */
-function PhotoUpload({ photo, onPhotoChange }) {
+/* ── Photo gallery component (multiple photos per item) ── */
+function PhotoGallery({ photos, onPhotosChange, compact }) {
   const fileRef = useRef(null);
+  const photoList = photos || [];
+  const thumbSize = compact ? 36 : 52;
 
   const handleFile = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    const compressed = await compressImage(file, 200, 0.6);
-    onPhotoChange(compressed);
+    const compressed = await compressImage(file, 180, 0.55);
+    onPhotosChange([...photoList, compressed]);
+    // Reset input so the same file can be re-selected
+    e.target.value = "";
   };
 
-  if (photo) {
-    return (
-      <div style={{ position: "relative", display: "inline-block" }}>
-        <img src={photo} alt="" style={{ width: 56, height: 56, objectFit: "cover", borderRadius: 8, border: "2px solid #e0e0e0" }} />
-        <button onClick={(e) => { e.stopPropagation(); onPhotoChange(""); }}
-          style={{ position: "absolute", top: -6, right: -6, width: 20, height: 20, borderRadius: "50%", background: "#e74c3c", color: "#fff", border: "none", fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}>×</button>
-      </div>
-    );
-  }
+  const removePhoto = (idx, e) => {
+    e.stopPropagation();
+    onPhotosChange(photoList.filter((_, i) => i !== idx));
+  };
 
   return (
-    <>
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+      {photoList.map((p, idx) => (
+        <div key={idx} style={{ position: "relative", display: "inline-block", flexShrink: 0 }}>
+          <img src={p} alt="" style={{ width: thumbSize, height: thumbSize, objectFit: "cover", borderRadius: 6, border: "2px solid #e0e0e0", display: "block" }} />
+          <button onClick={(e) => removePhoto(idx, e)}
+            style={{ position: "absolute", top: -5, right: -5, width: 18, height: 18, borderRadius: "50%", background: "#e74c3c", color: "#fff", border: "2px solid #fff", fontSize: 10, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0 }}>×</button>
+        </div>
+      ))}
       <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={handleFile} style={{ display: "none" }} />
       <button onClick={(e) => { e.stopPropagation(); fileRef.current.click(); }}
-        style={{ width: 56, height: 56, borderRadius: 8, border: "2px dashed #ccc", background: "#fafafa", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, color: "#bbb", flexShrink: 0 }}
+        style={{ width: thumbSize, height: thumbSize, borderRadius: 6, border: "2px dashed #ccc", background: "#fafafa", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: compact ? 14 : 18, color: "#bbb", flexShrink: 0 }}
         title="Add photo">
         📷
       </button>
-    </>
+    </div>
   );
 }
 
@@ -287,7 +293,20 @@ function ClothesApp({ sessionCode }) {
       isRemoteUpdate.current = true;
       if (data) {
         // data could be object or array from Firebase
-        const arr = Array.isArray(data) ? data.filter(Boolean) : Object.values(data);
+        const arr = (Array.isArray(data) ? data.filter(Boolean) : Object.values(data)).map(it => {
+          // Migrate old single-photo format to photos array
+          if (it.photo !== undefined && !it.photos) {
+            const photos = it.photo ? [it.photo] : [];
+            const { photo, ...rest } = it;
+            return { ...rest, photos };
+          }
+          if (!it.photos) return { ...it, photos: [] };
+          // Firebase may store arrays as objects with numeric keys
+          if (it.photos && !Array.isArray(it.photos)) {
+            return { ...it, photos: Object.values(it.photos) };
+          }
+          return it;
+        });
         setItems(arr);
         initialised.current = true;
       } else if (!initialised.current) {
@@ -351,7 +370,7 @@ function ClothesApp({ sessionCode }) {
       owned: 0,
       target: Number(newItem.target) || meta.defaultTarget,
       notes: newItem.notes,
-      photo: "",
+      photos: [],
       customLabel: type === "custom" ? newItem.customLabel : "",
     };
     addItem(item);
@@ -538,48 +557,56 @@ function ClothesApp({ sessionCode }) {
                   const status = getItemStatus(it);
                   const sc = STATUS_COLORS[status];
                   return (
-                    <div key={it.id} style={{ background: sc.bg, border: "1.5px solid " + sc.border, borderRadius: 12, padding: "12px 16px", display: "flex", gap: 12, alignItems: "center", opacity: status === "complete" ? 0.75 : 1 }}>
-                      {/* Photo */}
-                      <PhotoUpload photo={it.photo} onPhotoChange={photo => updateItem(it.id, { photo })} />
-
-                      {/* Info */}
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
-                          <span style={{ fontSize: 16 }}>{getItemEmoji(it)}</span>
-                          <span style={{ fontWeight: 600, fontSize: 14, color: "#1a1a2e" }}>{getItemLabel(it)}</span>
-                          <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 10, background: sc.badge + "22", color: sc.badge, textTransform: "uppercase", letterSpacing: 0.5 }}>{sc.text}</span>
+                    <div key={it.id} style={{ background: sc.bg, border: "1.5px solid " + sc.border, borderRadius: 12, padding: "12px 16px", opacity: status === "complete" ? 0.75 : 1 }}>
+                      {/* Top row: info + quantity + delete */}
+                      <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                        {/* Info */}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
+                            <span style={{ fontSize: 16 }}>{getItemEmoji(it)}</span>
+                            <span style={{ fontWeight: 600, fontSize: 14, color: "#1a1a2e" }}>{getItemLabel(it)}</span>
+                            <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 10, background: sc.badge + "22", color: sc.badge, textTransform: "uppercase", letterSpacing: 0.5 }}>{sc.text}</span>
+                          </div>
+                          {it.notes && <div style={{ fontSize: 12, color: "#666", lineHeight: 1.4 }}>{it.notes}</div>}
+                          <button onClick={() => setEditNotes({ id: it.id, notes: it.notes || "" })}
+                            style={{ fontSize: 11, color: "#999", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", padding: "2px 0", textDecoration: "underline" }}>
+                            {it.notes ? "edit note" : "+ add note"}
+                          </button>
                         </div>
-                        {it.notes && <div style={{ fontSize: 12, color: "#666", lineHeight: 1.4 }}>{it.notes}</div>}
-                        <button onClick={() => setEditNotes({ id: it.id, notes: it.notes || "" })}
-                          style={{ fontSize: 11, color: "#999", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", padding: "2px 0", textDecoration: "underline" }}>
-                          {it.notes ? "edit note" : "+ add note"}
-                        </button>
+
+                        {/* Quantity controls */}
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, minWidth: 90 }}>
+                          <div style={{ fontSize: 10, fontWeight: 700, color: "#888", textTransform: "uppercase", letterSpacing: 0.5 }}>Owned</div>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <button onClick={() => updateItem(it.id, { owned: Math.max(0, (it.owned || 0) - 1) })}
+                              style={{ width: 28, height: 28, borderRadius: 8, border: "1.5px solid #ddd", background: "#fff", cursor: "pointer", fontSize: 16, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", color: "#888" }}>−</button>
+                            <span style={{ fontSize: 20, fontWeight: 700, minWidth: 28, textAlign: "center", color: status === "complete" ? "#43a047" : "#1a1a2e" }}>{it.owned || 0}</span>
+                            <button onClick={() => updateItem(it.id, { owned: (it.owned || 0) + 1 })}
+                              style={{ width: 28, height: 28, borderRadius: 8, border: "1.5px solid #ddd", background: "#fff", cursor: "pointer", fontSize: 16, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", color: "#888" }}>+</button>
+                          </div>
+                          <div style={{ fontSize: 11, color: "#999" }}>
+                            / {it.target} needed
+                            <button onClick={() => {
+                                const val = prompt("Set target quantity:", it.target);
+                                if (val !== null && !isNaN(val)) updateItem(it.id, { target: Math.max(0, Number(val)) });
+                              }}
+                              style={{ background: "none", border: "none", color: "#6c5ce7", cursor: "pointer", fontSize: 11, fontFamily: "inherit", marginLeft: 4 }}>✎</button>
+                          </div>
+                        </div>
+
+                        {/* Delete */}
+                        <button onClick={() => removeItem(it.id)}
+                          style={{ background: "none", border: "none", color: "#ccc", fontSize: 16, cursor: "pointer", padding: "0 4px", lineHeight: 1, alignSelf: "center" }}
+                          onMouseEnter={e => e.target.style.color = "#e74c3c"} onMouseLeave={e => e.target.style.color = "#ccc"}>✕</button>
                       </div>
 
-                      {/* Quantity controls */}
-                      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, minWidth: 90 }}>
-                        <div style={{ fontSize: 10, fontWeight: 700, color: "#888", textTransform: "uppercase", letterSpacing: 0.5 }}>Owned</div>
-                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                          <button onClick={() => updateItem(it.id, { owned: Math.max(0, (it.owned || 0) - 1) })}
-                            style={{ width: 28, height: 28, borderRadius: 8, border: "1.5px solid #ddd", background: "#fff", cursor: "pointer", fontSize: 16, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", color: "#888" }}>−</button>
-                          <span style={{ fontSize: 20, fontWeight: 700, minWidth: 28, textAlign: "center", color: status === "complete" ? "#43a047" : "#1a1a2e" }}>{it.owned || 0}</span>
-                          <button onClick={() => updateItem(it.id, { owned: (it.owned || 0) + 1 })}
-                            style={{ width: 28, height: 28, borderRadius: 8, border: "1.5px solid #ddd", background: "#fff", cursor: "pointer", fontSize: 16, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", color: "#888" }}>+</button>
+                      {/* Photo gallery row — below the item info */}
+                      <div style={{ marginTop: 10, borderTop: "1px solid " + sc.border + "44", paddingTop: 8 }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: "#888", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>
+                          Photos {it.photos && it.photos.length > 0 ? "(" + it.photos.length + ")" : ""}
                         </div>
-                        <div style={{ fontSize: 11, color: "#999" }}>
-                          / {it.target} needed
-                          <button onClick={() => {
-                              const val = prompt("Set target quantity:", it.target);
-                              if (val !== null && !isNaN(val)) updateItem(it.id, { target: Math.max(0, Number(val)) });
-                            }}
-                            style={{ background: "none", border: "none", color: "#6c5ce7", cursor: "pointer", fontSize: 11, fontFamily: "inherit", marginLeft: 4 }}>✎</button>
-                        </div>
+                        <PhotoGallery photos={it.photos} onPhotosChange={photos => updateItem(it.id, { photos })} />
                       </div>
-
-                      {/* Delete */}
-                      <button onClick={() => removeItem(it.id)}
-                        style={{ background: "none", border: "none", color: "#ccc", fontSize: 16, cursor: "pointer", padding: "0 4px", lineHeight: 1, alignSelf: "center" }}
-                        onMouseEnter={e => e.target.style.color = "#e74c3c"} onMouseLeave={e => e.target.style.color = "#ccc"}>✕</button>
                     </div>
                   );
                 })}
@@ -632,9 +659,13 @@ function ClothesApp({ sessionCode }) {
                         <span style={{ fontSize: 11, fontWeight: 600, color: sc.badge }}>{sc.text}</span>
                       </td>
                       <td style={{ padding: "10px 14px", textAlign: "center" }}>
-                        {it.photo ? (
-                          <img src={it.photo} alt="" style={{ width: 32, height: 32, objectFit: "cover", borderRadius: 4, cursor: "pointer" }}
-                            onClick={() => setPhotoModal(it.id)} />
+                        {(it.photos && it.photos.length > 0) ? (
+                          <div style={{ display: "flex", gap: 3, justifyContent: "center", alignItems: "center", flexWrap: "wrap" }}>
+                            {(it.photos || []).slice(0, 3).map((p, pi) => (
+                              <img key={pi} src={p} alt="" style={{ width: 28, height: 28, objectFit: "cover", borderRadius: 4 }} />
+                            ))}
+                            {it.photos.length > 3 && <span style={{ fontSize: 10, color: "#888", fontWeight: 600 }}>+{it.photos.length - 3}</span>}
+                          </div>
                         ) : <span style={{ color: "#ccc" }}>—</span>}
                       </td>
                     </tr>
@@ -726,11 +757,17 @@ function ClothesApp({ sessionCode }) {
       </Modal>
 
       {/* ── Photo zoom modal ── */}
-      <Modal open={!!photoModal} onClose={() => setPhotoModal(null)} title="Photo">
+      <Modal open={!!photoModal} onClose={() => setPhotoModal(null)} title="Photos">
         {photoModal && (() => {
           const it = items.find(i => i.id === photoModal);
-          if (!it || !it.photo) return null;
-          return <img src={it.photo} alt="" style={{ width: "100%", borderRadius: 8 }} />;
+          if (!it || !it.photos || it.photos.length === 0) return <p style={{ color: "#999", fontSize: 14 }}>No photos yet</p>;
+          return (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {it.photos.map((p, idx) => (
+                <img key={idx} src={p} alt="" style={{ width: "100%", borderRadius: 8 }} />
+              ))}
+            </div>
+          );
         })()}
       </Modal>
 
